@@ -44,12 +44,16 @@ pthread_attr_t  sb_thread_attr;
 /* Thread descriptors */
 static sb_thread_ctxt_t *threads;
 
+pthread_cond_t  *threads_cond;
+sb_thread_event_t *threads_event;
+pthread_mutex_t   *threads_mutex;
+
 /* Stack size for each thread */
 static int thread_stack_size;
 
 int sb_thread_init(void)
 {
-  thread_stack_size = sb_get_value_size("thread-stack-size");
+  thread_stack_size = sb_get_value_size("thread-stack-size"); // 65536
   if (thread_stack_size <= 0)
   {
     log_text(LOG_FATAL, "Invalid value for thread-stack-size: %d.\n", thread_stack_size);
@@ -68,7 +72,11 @@ int sb_thread_init(void)
   thr_setconcurrency(sb_globals.threads);
 #endif
 
-  threads = malloc(sb_globals.threads * sizeof(sb_thread_ctxt_t));
+  unsigned int thread_count = (sb_globals.event_count > 0) ? 
+                              (sb_globals.threads + sb_globals.event_count - 1) : 
+                              sb_globals.threads;
+
+  threads = malloc(thread_count * sizeof(sb_thread_ctxt_t));
   if (threads == NULL)
   {
     log_text(LOG_FATAL, "Memory allocation failure.\n");
@@ -161,13 +169,17 @@ int sb_thread_create_workers(void *(*worker_routine)(void*))
 
   log_text(LOG_NOTICE, "Initializing worker threads...\n");
 
-  for(i = 0; i < sb_globals.threads; i++)
+  unsigned int thread_count = (sb_globals.event_count > 0) ? 
+                              (sb_globals.threads + sb_globals.event_count - 1) : 
+                              sb_globals.threads;
+
+  for(i = 0; i < thread_count; i++)
   {
     threads[i].id = i;
   }
 
 
-  for(i = 0; i < sb_globals.threads; i++)
+  for(i = 0; i < thread_count; i++)
   {
     int err;
 
@@ -185,7 +197,11 @@ int sb_thread_create_workers(void *(*worker_routine)(void*))
 
 int sb_thread_join_workers(void)
 {
-  for(unsigned i = 0; i < sb_globals.threads; i++)
+  unsigned int thread_count = (sb_globals.event_count > 0) ? 
+                              (sb_globals.threads + sb_globals.event_count - 1) : 
+                              sb_globals.threads;
+
+  for(unsigned i = 0; i < thread_count; i++)
   {
     int err;
 

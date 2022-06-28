@@ -115,6 +115,7 @@ option_t *sb_find_option(const char *name)
 static void read_config_file(const char *filename)
 {
   /* read config options from file */
+  printf("filename: %s\n", filename);
   FILE *fp = fopen(filename, "r");
   if (!fp) {
     perror(filename);

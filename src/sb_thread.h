@@ -31,6 +31,7 @@
 #ifdef HAVE_PTHREAD_H
 # include <pthread.h>
 #endif
+#include <stdbool.h>
 
 /* Thread context definition */
 
@@ -41,6 +42,26 @@ typedef struct
 } sb_thread_ctxt_t;
 
 extern pthread_attr_t sb_thread_attr;
+
+typedef enum EVENT_STATE
+{
+   UNKNOWN_STATE,
+   EVENT_BEGIN,
+   EVENT_END
+} event_state_t;
+
+typedef struct
+{
+   bool           is_custom;
+   bool           is_end;
+   bool           is_ready;
+   char           *sql_str;
+   event_state_t  event_state;
+} sb_thread_event_t;
+
+extern pthread_cond_t  *threads_cond;
+extern sb_thread_event_t *threads_event;
+extern pthread_mutex_t   *threads_mutex;
 
 int sb_thread_create(pthread_t *thread, const pthread_attr_t *attr,
                      void *(*start_routine) (void *), void *arg);

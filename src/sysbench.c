@@ -65,6 +65,8 @@
 #endif
 
 #include <luajit.h>
+#include <assert.h>
+#include "cJSON.h"
 
 #include "sysbench.h"
 #include "sb_options.h"
@@ -119,9 +121,18 @@ sb_arg_t general_args[] =
   SB_OPT("luajit-cmd", "perform LuaJIT control command. This option is "
          "equivalent to 'luajit -j'. See LuaJIT documentation for more "
          "information", NULL, STRING),
+  SB_OPT("event-count", "Add costom examples and test their performance", "0", INT),
 
   SB_OPT_END
 };
+
+/* custom thread pool */
+sb_thread_pool_t sb_custom_thread_pool;
+index_item_t threads_index[MAX_THREAD_LEN];
+int32_t threads_count[MAX_THREAD_LEN];
+
+TestSpec  test_spec;
+int       sequence[MAX_STEP];
 
 /* List of available tests */
 sb_list_t        tests;
@@ -149,6 +160,7 @@ static ck_ring_t          queue_ring CK_CC_CACHELINE;
 static int report_thread_created CK_CC_CACHELINE;
 static int checkpoints_thread_created;
 static int eventgen_thread_created;
+static int custom_coordinate_thread_created;
 
 /* per-thread timers for response time stats */
 static sb_timer_t *timers;
@@ -495,6 +507,111 @@ void print_help(void)
          "each test.\n\n");
 }
 
+static void parse_test(cJSON *json)
+{
+  cJSON *arrayItem = cJSON_GetObjectItem(json, "test-spec");
+  if(arrayItem != NULL)  
+  {  
+    int size = cJSON_GetArraySize(arrayItem);
+    test_spec.n_session = size;
+    test_spec.sessions = (session_t *)malloc(sizeof(session_t) * size);
+    for (int i = 0 ; i < size; i++)
+    {
+      cJSON *stepArrayItem = cJSON_GetArrayItem(arrayItem, i);
+      int step_s = cJSON_GetArraySize(stepArrayItem);
+      (test_spec.sessions + i)->n_step = step_s;
+      for (int j = 0; j < step_s; j++)
+      {
+        cJSON *object = cJSON_GetArrayItem(stepArrayItem, j);
+        cJSON *item = cJSON_GetObjectItem(object, "id");
+        if (item != NULL)
+        {
+          // printf("cJSON_GetObjectItem: type=%d, int is %d\n", item->type, item->valueint);  
+          ((test_spec.sessions + i)->steps)[j].id = item->valueint;
+        }
+
+        item = cJSON_GetObjectItem(object, "sql");
+        if (item != NULL)
+        {
+          // printf("cJSON_GetObjectItem: type=%d, str is %s\n", item->type, item->valuestring);  
+          ((test_spec.sessions + i)->steps)[j].sql = (char *)malloc(sizeof(char) * (strlen(item->valuestring) + 2));
+          memset(((test_spec.sessions + i)->steps)[j].sql, 0, strlen(item->valuestring) + 2);
+          memcpy(((test_spec.sessions + i)->steps)[j].sql, item->valuestring, strlen(item->valuestring));
+        }
+
+        item = cJSON_GetObjectItem(object, "wait-for");
+        if (item != NULL)
+        {
+          // printf("cJSON_GetObjectItem: type=%d, str is %d\n", item->type, item->valueint);  
+          ((test_spec.sessions + i)->steps)[j].wait_for = item->valueint;
+        }
+        else
+        {
+          ((test_spec.sessions + i)->steps)[j].wait_for = 0;
+        }
+      }
+    }
+  }
+}
+
+static void parse_sequence(cJSON *json)
+{
+  cJSON *arrayItem = cJSON_GetObjectItem(json, "sequence");
+  if(arrayItem != NULL)  
+  {  
+    int size = cJSON_GetArraySize(arrayItem);
+    for (int i = 0 ; i < size; i++) {
+      cJSON *item = cJSON_GetArrayItem(arrayItem, i);
+      if(item!=NULL)  
+      {  
+        // printf("cJSON_GetObjectItem: type=%d, str is %s, int is %d\n", item->type, item->string, item->valueint);  
+        sequence[i] = item->valueint;
+      }
+    }
+  }
+}
+
+static void parse_anomaly_spec(void)
+{
+  char *anomaly_path = "anomasly/";
+  char *test_name = "deadlock-simple.json";
+  char full_name[128];
+  memset(full_name, 0, 128);
+
+  // TODO: 将此处改成循环，将 anomaly_path 目录下的所有 json 文件读取出来
+  snprintf(full_name, 128, "../sysbench/src/anomaly/%s", test_name);
+  printf("%s\n", full_name);
+  FILE *fh = fopen(full_name, "r");
+  if (!fh) 
+  {
+    printf("File is not exist.\n");
+    return;
+  }
+    
+  fseek(fh, 0L, SEEK_END);  
+  
+  long len = ftell(fh);  
+  printf("len: %d\n", len);
+  fseek(fh, 0, SEEK_SET);  
+  char *data = (char *)malloc(len + 1);  
+  fread(data, 1, len, fh);  
+  fclose(fh);  
+
+  printf("data\n%s\n", data);
+  cJSON *json;  
+  json = cJSON_Parse(data);  
+  if (!json)  
+  { 
+    printf("Error before: [%s]\n", cJSON_GetErrorPtr());  
+  } 
+  else  
+  {
+    parse_sequence(json);
+    parse_test(json);
+  }
+  return;
+}
+
 /*
   Set an option value if a default value has been previously set with
   sb_register_arg_set(), i.e. if it's a 'known' option, or ignore_unknown is
@@ -822,28 +939,80 @@ static void *worker_thread(void *arg)
     return NULL;
   }
 
-  log_text(LOG_DEBUG, "Worker thread (#%d) initialized", thread_id);
+  // log_text(LOG_DEBUG, "Worker thread (#%d) initialized", thread_id);
 
   /* Wait for other threads to initialize */
   if (sb_barrier_wait(&worker_barrier) < 0)
     return NULL;
 
-  if (test->ops.thread_run != NULL)
-  {
-    /* Use benchmark-provided thread_run implementation */
-    rc = test->ops.thread_run(thread_id);
-  }
-  else
-  {
-    /* Use default thread_run implementation */
-    rc = thread_run(test, thread_id);
-  }
+  log_text(LOG_DEBUG, "Worker thread (#%d) initialized", thread_id);
 
+  if (sb_globals.event_count > 0) 
+  {
+    // printf("Worker thread (#%d) initialized", thread_id);
+    while(true) {
+      /* TODO:等待条件变量和共享内存中的数据，拿到 thread_id 的 event_t 传给 thread_run_once 
+       * thread_run_once 定义在 sysbench.lua 中
+       */
+      pthread_mutex_lock(&threads_mutex[thread_id]);
+      // printf("[thread]%d waiting for signal.\n", thread_id);
+      while (!threads_event[thread_id].is_ready) 
+      {
+        pthread_cond_wait(&threads_cond[thread_id], &threads_mutex[thread_id]);
+      }
+      
+      log_text(LOG_DEBUG, "Worker thread (#%d) receive a condition variable.", thread_id);
+      threads_event[thread_id].is_ready = false;
+      if (threads_event[thread_id].is_end)
+      {
+        rc = 0;
+        pthread_mutex_unlock(&threads_mutex[thread_id]);
+        break;
+      }
+      else
+      {
+        rc = test->ops.thread_run_once(thread_id, threads_event[thread_id].sql_str, threads_event[thread_id].is_custom);
+
+        if (threads_event[thread_id].is_custom)
+          assert(false);
+        if (!threads_event[thread_id].is_custom || threads_event[thread_id].event_state == EVENT_END)
+        {
+          pthread_mutex_lock(&sb_custom_thread_pool.mutex);
+          ck_ring_enqueue_spsc(&sb_custom_thread_pool.queue_thread, sb_custom_thread_pool.queue_buffer, &(threads_index[thread_id]));
+          // printf("(zhuang).3 busy count:%d.\n", sb_custom_thread_pool.busy_count);
+          sb_custom_thread_pool.busy_count--;
+          // printf("(zhuang).4 busy count:%d.\n", sb_custom_thread_pool.busy_count);
+          pthread_mutex_unlock(&sb_custom_thread_pool.mutex);
+          // printf("(zhuang).5 busy count:%d.\n", sb_custom_thread_pool.busy_count);
+          log_text(LOG_DEBUG, "busy count(#%d), thread-id(#%d)", sb_custom_thread_pool.busy_count, thread_id);
+          log_text(LOG_DEBUG, "Worker thread (#%d) done.", thread_id);
+          // printf("(zhuang).6 busy count:%d.\n", sb_custom_thread_pool.busy_count);
+        }
+      }
+      memset(&threads_event[thread_id], 0, sizeof(sb_thread_event_t));
+      pthread_mutex_unlock(&threads_mutex[thread_id]);
+    }
+  } 
+  else 
+  {
+    if (test->ops.thread_run != NULL)
+    {
+      /* Use benchmark-provided thread_run implementation */
+      rc = test->ops.thread_run(thread_id);
+    }
+    else
+    {
+      /* Use default thread_run implementation */
+      rc = thread_run(test, thread_id);
+    }
+  }
+  
+  // printf("[thread1]:%d is done.", thread_id);
   if (rc != 0)
     sb_globals.error = 1;
   else if (test->ops.thread_done != NULL)
     test->ops.thread_done(thread_id);
-
+  // printf("[thread]:%d is done.\n", thread_id);
   return NULL;
 }
 
@@ -852,6 +1021,17 @@ static void *worker_thread(void *arg)
 static inline double sb_rand_exp(double lambda)
 {
   return -lambda * log(1 - sb_rand_uniform_double());
+}
+
+static void *control_thread_proc(void * arg)
+{
+  int32_t *thread_ids = (int32_t *)arg;
+
+  sb_tls_thread_id = SB_BACKGROUND_THREAD_ID;
+
+  sb_rand_thread_init();
+
+  log_text(LOG_DEBUG, "Event control thread started");
 }
 
 static void *eventgen_thread_proc(void *arg)
@@ -927,6 +1107,129 @@ static void *eventgen_thread_proc(void *arg)
   return NULL;
 }
 
+/* coordinate thread to generate custom anomaly */
+
+
+static void *coordinate_thread_proc(void *arg)
+{
+  (void)arg; /* unused */
+
+  sb_tls_thread_id = SB_BACKGROUND_THREAD_ID;
+
+  /* Initialize thread-local RNG state */
+  sb_rand_thread_init();
+  memset(threads_index, 0, sizeof(index_item_t) * MAX_THREAD_LEN);
+
+  /* init sb_custom_thread_pool */
+  sb_custom_thread_pool.busy_count = 0;
+  sb_custom_thread_pool.capacity = sb_globals.threads;
+  sb_custom_thread_pool.custom_count = sb_globals.event_count;
+  pthread_mutex_init(&sb_custom_thread_pool.mutex, NULL);
+  ck_ring_init(&(sb_custom_thread_pool.queue_thread), MAX_THREAD_LEN);
+
+  log_text(LOG_DEBUG, "Custom event generating thread started");
+
+  for (unsigned int i = 0; i < sb_globals.threads + sb_globals.event_count - 1; i++)
+  {
+    threads_index[i].thread_id = (int32_t)i;
+    ck_ring_enqueue_spsc(&sb_custom_thread_pool.queue_thread, sb_custom_thread_pool.queue_buffer, &(threads_index[i]));
+    threads_count[i] = 0;
+    memset(&threads_event[i], 0, sizeof(sb_thread_event_t));
+    // log_text(LOG_DEBUG,"Enqueue thread id(#%d), pointer is %p.", threads_index[i].thread_id, &threads_index);
+  }
+
+  /* Wait for the worker threads to initialize */
+  if (sb_barrier_wait(&worker_barrier) < 0)
+    return NULL;
+
+  custom_coordinate_thread_created = 1;
+
+  uint32_t controller_num = 0;
+
+  do 
+  {
+    uint64_t curr_ns = sb_timer_value(&sb_exec_timer);
+    if (sb_globals.max_time_ns > 0 &&
+        SB_UNLIKELY(curr_ns >= sb_globals.max_time_ns))
+      break;
+    
+    double solt = sb_rand_uniform_double();
+    index_item_t *index_item;
+    int32_t thread_id;
+    
+    while (sb_custom_thread_pool.busy_count >= sb_custom_thread_pool.capacity) {
+      // log_text(LOG_DEBUG, "Busy count while choose (#%d)", sb_custom_thread_pool.busy_count);
+      sb_nanosleep(1);
+    }
+    
+    if (solt > 1)
+    {
+      // data anomly
+      
+      pthread_mutex_lock(&sb_custom_thread_pool.mutex);
+      sb_custom_thread_pool.busy_count += sb_custom_thread_pool.custom_count;
+      int32_t thread_ids[sb_globals.event_count];
+      for (unsigned int i = 0 ; i < sb_globals.event_count; i++)
+      {
+        ck_ring_dequeue_spsc(&sb_custom_thread_pool.queue_thread, sb_custom_thread_pool.queue_buffer, &index_item);
+        if (index_item == NULL)
+          printf("The queue is empty, but you still want to dequeue one.\n");
+        thread_ids[i] = index_item->thread_id;
+      }
+      pthread_mutex_unlock(&sb_custom_thread_pool.mutex);
+      pthread_t controller;
+      // TODO:重新创建一个线程进行并发访问控制，生成数据异常例子
+      if (sb_thread_create(&controller, &sb_thread_attr,
+                                &control_thread_proc, NULL) != 0)
+      {
+        log_errno(LOG_FATAL,
+                  "sb_thread_create() for the control thread failed.");
+        return 1;
+      }
+      assert(false);
+    }
+    else 
+    {
+      // common events
+      log_text(LOG_DEBUG, "Start Choose thread id");
+      // printf("Start Choose thread id");
+      pthread_mutex_lock(&sb_custom_thread_pool.mutex);
+      sb_custom_thread_pool.busy_count++;
+      ck_ring_dequeue_spsc(&sb_custom_thread_pool.queue_thread, sb_custom_thread_pool.queue_buffer, &index_item);
+      pthread_mutex_unlock(&sb_custom_thread_pool.mutex);
+      if (index_item == NULL)
+        printf("The queue is empty, but you still want to dequeue one.\n");
+      log_text(LOG_DEBUG, "Choose thread id(#%d)", index_item->thread_id);
+      // printf("Choose thread id(#%d)\n", index_item->thread_id);
+      thread_id = index_item->thread_id;
+      assert(thread_id >= 0);
+      threads_count[thread_id]++;
+      pthread_mutex_lock(&threads_mutex[thread_id]);
+      // printf("Fetch lock thread id(#%d)\n", index_item->thread_id);
+      
+      threads_event[thread_id].is_custom = false;
+      threads_event[thread_id].event_state = UNKNOWN_STATE;
+      threads_event[thread_id].is_ready = true;
+      pthread_mutex_unlock(&threads_mutex[thread_id]);
+      pthread_cond_signal(&threads_cond[thread_id]);
+    }
+  } while (true);
+
+  // printf("Coordinate thread is done.");
+  for (unsigned int i = 0; i < sb_globals.threads + sb_globals.event_count - 1; i++)
+  {
+    pthread_mutex_lock(&threads_mutex[i]);
+    threads_event[i].is_end = true;
+    threads_event[i].is_ready = true;
+    pthread_mutex_unlock(&threads_mutex[i]);
+    pthread_cond_signal(&threads_cond[i]);
+  }
+
+  // TODO: 等待所有的 control 进程结束。暂时不实现，看效果。
+
+  return NULL;
+}
+
 /* Intermediate reports thread */
 
 static void *report_thread_proc(void *arg)
@@ -960,6 +1263,8 @@ static void *report_thread_proc(void *arg)
   pause_ns = interval_ns;
   prev_ns = sb_timer_value(&sb_exec_timer) + interval_ns;
 
+  log_text(LOG_DEBUG, "Reporting thread print started");
+
   for (;;)
   {
     sb_nanosleep(pause_ns);
@@ -974,6 +1279,8 @@ static void *report_thread_proc(void *arg)
     } while (curr_ns >= next_ns);
     pause_ns = next_ns - curr_ns;
   }
+
+  log_text(LOG_DEBUG, "Reporting thread end");
 
   pthread_cleanup_pop(1);
 
@@ -1060,6 +1367,7 @@ static int run_test(sb_test_t *test)
   pthread_t    report_thread;
   pthread_t    checkpoints_thread;
   pthread_t    eventgen_thread;
+  pthread_t    coordinate_thread;
   unsigned int barrier_threads;
   uint64_t     old_max_events = 0;
 
@@ -1085,7 +1393,9 @@ static int run_test(sb_test_t *test)
 
   /* Calculate the required number of threads for the worker start barrier */
   barrier_threads = 1 /* main thread */ + sb_globals.threads +
-    (sb_globals.tx_rate > 0) /* event generation thread */;
+    (sb_globals.tx_rate > 0) /* event generation thread */ +
+    (sb_globals.event_count > 0) + 
+    ((sb_globals.event_count > 0) ? (sb_globals.event_count - 1) : 0);
 
   if (sb_barrier_init(&worker_barrier, barrier_threads,
                       threads_started_callback, NULL))
@@ -1124,7 +1434,17 @@ static int run_test(sb_test_t *test)
                                 &eventgen_thread_proc, NULL)) != 0)
     {
       log_errno(LOG_FATAL,
-                "sb_thread_create() for the reporting thread failed.");
+                "sb_thread_create() for the generate event thread failed.");
+      return 1;
+    }
+  } // eventgen 线程，通过 time-value 控制 event 发生的速率，条件变量 queue_cond 来并发编程
+
+  if (sb_globals.event_count > 0) {
+    if ((err = sb_thread_create(&coordinate_thread, &sb_thread_attr,
+                                &coordinate_thread_proc, NULL)) != 0)
+    {
+      log_errno(LOG_FATAL,
+                "sb_thread_create() for the coordinator thread failed.");
       return 1;
     }
   }
@@ -1224,6 +1544,13 @@ static int run_test(sb_test_t *test)
       log_errno(LOG_FATAL, "Terminating the reporting thread failed.");
   }
 
+  if (custom_coordinate_thread_created)
+  {
+    if ((sb_thread_cancel(coordinate_thread) ||
+         sb_thread_join(coordinate_thread, NULL)) && sb_globals.max_time_ns == 0)
+      log_text(LOG_FATAL, "Terminating the coordinate thread failed.");
+  }
+
   if (eventgen_thread_created)
   {
     /*
@@ -1300,6 +1627,8 @@ static int init(void)
 
   sb_globals.threads = sb_get_value_int("threads");
 
+  sb_globals.event_count = sb_get_value_int("event-count");
+
   thread_init_timeout = sb_get_value_int("thread-init-timeout");
   
   if (sb_globals.threads <= 0)
@@ -1362,7 +1691,7 @@ static int init(void)
   }
 
   int err;
-  if ((err = sb_thread_init()))
+  if ((err = sb_thread_init())) // alloc memory for threads
     return err;
 
   sb_globals.debug = sb_get_value_flag("debug");
@@ -1428,6 +1757,23 @@ static int init(void)
   for (unsigned i = 0; i < sb_globals.threads; i++)
     sb_timer_init(&timers[i]);
 
+  /* Initialize conds and threads identify */
+  if (sb_globals.event_count > 0)
+  {
+    unsigned int count = sb_globals.threads + sb_globals.event_count - 1;
+    threads_cond = sb_alloc_array(sizeof(pthread_cond_t), count);
+    threads_event = sb_alloc_array(sizeof(sb_thread_event_t), count);
+    threads_mutex = sb_alloc_array(sizeof(pthread_mutex_t), count);
+    
+    for (unsigned i = 0; i < count; i++)
+    {
+      pthread_cond_init(threads_cond + i, NULL);
+      pthread_mutex_init(threads_mutex + i, NULL);
+    }
+
+    memset(threads_event, 0, sizeof(sb_thread_event_t) * sb_globals.threads);
+  }
+
   /* LuaJIT commands */
   sb_globals.luajit_cmd = sb_get_value_string("luajit-cmd");
 
@@ -1477,6 +1823,8 @@ int main(int argc, char *argv[])
   /* Initialize global variables and logger */
   if (init() || log_init() || sb_counters_init())
     return EXIT_FAILURE;
+
+  parse_anomaly_spec();
 
   print_header();
 
@@ -1635,6 +1983,17 @@ void *sb_alloc_per_thread_array(size_t size)
     threads, so they also share the same single slot in each allocated array.
   */
   const size_t bsize = (sb_globals.threads + 1) * size;
+
+  void *ptr = sb_memalign(bsize, CK_MD_CACHELINE);
+
+  memset(ptr, 0, bsize);
+
+  return ptr;
+}
+
+void *sb_alloc_array(size_t size, unsigned int count)
+{
+  const size_t bsize = (count + 1) * size;
 
   void *ptr = sb_memalign(bsize, CK_MD_CACHELINE);
 

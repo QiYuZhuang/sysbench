@@ -30,7 +30,7 @@ if USE_PGSQL
 pgsql_ldadd = drivers/pgsql/libsbpgsql.a $(PGSQL_LIBS)
 endif
 
-sysbench_SOURCES = sysbench.c sysbench.h sb_timer.c sb_timer.h \
+sysbench_SOURCES = sysbench.c sysbench.h cJSON.c cJSON.h sb_timer.c sb_timer.h \
 sb_options.c sb_options.h sb_logger.c sb_logger.h sb_list.h db_driver.h \
 db_driver.c sb_histogram.c sb_histogram.h sb_rand.c sb_rand.h \
 sb_thread.c sb_thread.h sb_barrier.c sb_barrier.h sb_lua.c \

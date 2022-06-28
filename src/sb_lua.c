@@ -56,6 +56,7 @@
 #define THREAD_INIT_FUNC "thread_init"
 #define THREAD_DONE_FUNC "thread_done"
 #define THREAD_RUN_FUNC "thread_run"
+#define THREAD_RUN_FUNC_ONCE "thread_run_once"
 #define INIT_FUNC "init"
 #define DONE_FUNC "done"
 #define REPORT_INTERMEDIATE_HOOK "report_intermediate"
@@ -125,6 +126,7 @@ static int sb_lua_op_init(void);
 static int sb_lua_op_done(void);
 static int sb_lua_op_thread_init(int);
 static int sb_lua_op_thread_run(int);
+static int sb_lua_op_thread_run_once(int, const char *, bool);
 static int sb_lua_op_thread_done(int);
 
 static sb_operations_t lua_ops = {
@@ -325,6 +327,9 @@ sb_test_t *sb_load_lua(const char *testname)
   if (func_available(gstate, THREAD_RUN_FUNC))
     sbtest.ops.thread_run = &sb_lua_op_thread_run;
 
+  if (func_available(gstate, THREAD_RUN_FUNC_ONCE))
+    sbtest.ops.thread_run_once = &sb_lua_op_thread_run_once;
+
   if (sb_lua_hook_defined(gstate, REPORT_INTERMEDIATE_HOOK))
     sbtest.ops.report_intermediate = sb_lua_report_intermediate;
 
@@ -435,6 +440,24 @@ int sb_lua_op_thread_run(int thread_id)
   if (lua_pcall(L, 1, 1, 0))
   {
     call_error(L, THREAD_RUN_FUNC);
+    return 1;
+  }
+
+  return 0;
+}
+
+int sb_lua_op_thread_run_once(int thread_id, const char * event_str, bool is_custom)
+{
+  lua_State * const L = states[thread_id];
+
+  lua_getglobal(L, THREAD_RUN_FUNC_ONCE);
+  lua_pushnumber(L, thread_id);
+  lua_pushstring(L, event_str);
+  lua_pushboolean(L, is_custom);
+
+  if (lua_pcall(L, 3, 1, 0))
+  {
+    call_error(L, THREAD_RUN_FUNC_ONCE);
     return 1;
   }
 

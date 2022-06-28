@@ -27,6 +27,7 @@ bool sb_more_events(int thread_id);
 -- ----------------------------------------------------------------------
 function thread_run(thread_id)
    while ffi.C.sb_more_events(thread_id) do
+      -- print("thread_run.\n")
       ffi.C.sb_event_start(thread_id)
 
       local success, ret
@@ -52,6 +53,68 @@ function thread_run(thread_id)
       end
 
       ffi.C.sb_event_stop(thread_id)
+   end
+end
+
+-- ----------------------------------------------------------------------
+-- This is a Lua version of sysbench.c:thread_run_once()
+-- ----------------------------------------------------------------------
+function thread_run_once(thread_id, str, is_custom)
+   -- if not is_custom then 
+   --    print("run here, thread_id: "..thread_id..". common event")
+   -- else
+   --    print("run here, thread_id:"..thread_id..". data anomly")
+   -- end
+   if not is_custom then
+      ffi.C.sb_event_start(thread_id)
+
+      local success, ret
+      repeat
+         success, ret = pcall(event, thread_id)
+
+         if not success then
+            if type(ret) == "table" and
+               ret.errcode == sysbench.error.RESTART_EVENT
+            then
+               if sysbench.hooks.before_restart_event then
+                  sysbench.hooks.before_restart_event(ret)
+               end
+            else
+               error(ret, 2) -- propagate unknown errors
+            end
+         end
+      until success
+
+      -- Stop the benchmark if event() returns a value other than nil or false
+      if ret then
+         print("unknown error, find bug.")
+         return
+      end
+
+      ffi.C.sb_event_stop(thread_id)
+   else
+      local success, ret
+      repeat
+         success, ret = pcall(str, thread_id)
+
+         if not success then
+            if type(ret) == "table" and
+               ret.errcode == sysbench.error.RESTART_EVENT
+            then
+               if sysbench.hooks.before_restart_event then
+                  sysbench.hooks.before_restart_event(ret)
+               end
+            else
+               error(ret, 2) -- propagate unknown errors
+            end
+         end
+      until success
+
+      -- Stop the benchmark if event() returns a value other than nil or false
+      if ret then
+         print("unknown error, find bug.")
+         return
+      end
    end
 end
 

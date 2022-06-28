@@ -1,0 +1,41 @@
+
+{
+  "test-spec": 
+  [ 
+    [
+      {
+        "id":   1,
+        "sql":  "UPDATE checking1 SET c_bal = 100 WHERE c_custid = 100;",
+        "wait": null
+      },
+      { 
+        "id":   2,
+        "sql":  "UPDATE saving2 SET s_bal = 200 WHERE s_custid = 200;",
+        "wait": 4
+      },
+      {
+        "id":   3,
+        "sql":  "COMMIT;",
+        "wait": null
+      }
+    ],
+    [
+      {
+        "id":   4,
+        "sql":  "UPDATE saving2 SET s_bal = 200 WHERE s_custid = 200;",
+        "wait": null
+      },
+      {
+        "id":   5,
+        "sql":  "UPDATE checking1 SET c_bal = 100 WHERE c_custid = 100;",
+        "wait": 1
+      },
+      {
+        "id":   6,
+        "sql":  "COMMIT;",
+        "wait": null
+      }  
+    ]
+  ],
+  "sequence": [1, 4, 2, 5, 3, 6]
+}

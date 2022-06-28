@@ -44,12 +44,20 @@
 #include "tests/sb_threads.h"
 #include "tests/sb_mutex.h"
 
+#include "ck_cc.h"
+#include "ck_ring.h"
+
 /* Macros to control global execution mutex */
 #define SB_THREAD_MUTEX_LOCK() pthread_mutex_lock(&sb_globals.exec_mutex) 
 #define SB_THREAD_MUTEX_UNLOCK() pthread_mutex_unlock(&sb_globals.exec_mutex)
 
 /* Maximum number of elements in --report-checkpoints list */
 #define MAX_CHECKPOINTS 256
+
+/* Maximum queue length for thread pool */
+#define MAX_THREAD_LEN  1024
+#define MAX_STEPS_PER_SESSION 64
+#define MAX_STEP        512
 
 /* Request types definition */
 
@@ -123,6 +131,7 @@ typedef int sb_op_init(void);
 typedef int sb_op_prepare(void);
 typedef int sb_op_thread_init(int);
 typedef int sb_op_thread_run(int);
+typedef int sb_op_thread_run_once(int, const char *, bool);
 typedef void sb_op_print_mode(void);
 typedef sb_event_t sb_op_next_event(int);
 typedef int sb_op_execute_event(sb_event_t *, int);
@@ -156,6 +165,7 @@ typedef struct
   sb_op_report          *report_intermediate; /* intermediate reports handler */
   sb_op_report          *report_cumulative;   /* cumulative reports handler */
   sb_op_thread_run      *thread_run;      /* main thread loop */
+  sb_op_thread_run_once *thread_run_once;     /* once a event */
   sb_op_thread_done     *thread_done;     /* thread finalize function */
   sb_op_cleanup         *cleanup;         /* called after exit from thread,
                                              but before timers stop */ 
@@ -174,6 +184,38 @@ typedef struct sb_test
 
   sb_list_item_t    listitem;
 } sb_test_t;
+
+typedef struct sb_thread_pool
+{
+  int capacity;
+  int busy_count;
+  int custom_count;
+
+  pthread_mutex_t mutex;
+  ck_ring_t queue_thread;
+  ck_ring_buffer_t queue_buffer[MAX_THREAD_LEN] CK_CC_CACHELINE;
+} sb_thread_pool_t;
+
+typedef struct Step
+{
+  int32_t id;
+  char*   sql;
+  int32_t wait_for;
+}step_t;
+
+typedef struct Session
+{
+  /* data */
+  step_t    steps[MAX_STEPS_PER_SESSION];
+  int32_t   n_step;
+}session_t;
+
+typedef struct
+{
+  char      *test_name;
+  session_t *sessions;
+  int32_t   n_session;
+} TestSpec;
 
 /* sysbench global variables */
 
@@ -208,6 +250,7 @@ typedef struct
   int             warmup_time;  /* warmup time */
   uint64_t        nevents CK_CC_CACHELINE; /* event counter */
   const char      *luajit_cmd; /* LuaJIT command */
+  int             event_count;
 } sb_globals_t;
 
 extern sb_globals_t sb_globals CK_CC_CACHELINE;
@@ -219,6 +262,21 @@ extern sb_timer_t      sb_exec_timer CK_CC_CACHELINE;
 /* timers for checkpoint reports */
 extern sb_timer_t      sb_intermediate_timer;
 extern sb_timer_t      sb_checkpoint_timer;
+
+/* thread pool for custom event generate*/
+extern sb_thread_pool_t sb_custom_thread_pool;
+
+typedef struct 
+{
+  /* data */
+  int32_t thread_id;
+} index_item_t;
+
+extern index_item_t threads_index[MAX_THREAD_LEN];
+extern int32_t threads_count[MAX_THREAD_LEN];
+
+extern TestSpec test_spec;
+extern int      sequence[MAX_STEP];
 
 extern TLS int sb_tls_thread_id;
 
@@ -241,5 +299,7 @@ void sb_report_cumulative(sb_stat_t *stat);
   worker and background ones.
 */
 void *sb_alloc_per_thread_array(size_t size);
+
+void *sb_alloc_array(size_t size, unsigned int count);
 
 #endif
