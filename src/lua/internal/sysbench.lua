@@ -59,7 +59,7 @@ end
 -- ----------------------------------------------------------------------
 -- This is a Lua version of sysbench.c:thread_run_once()
 -- ----------------------------------------------------------------------
-function thread_run_once(thread_id, str, is_custom)
+function thread_run_once(thread_id, seed, str, is_custom)
    -- if not is_custom then 
    --    print("run here, thread_id: "..thread_id..". common event")
    -- else
@@ -70,8 +70,14 @@ function thread_run_once(thread_id, str, is_custom)
 
       local success, ret
       repeat
-         success, ret = pcall(event, thread_id)
+         local event_fun =_G["event"]
 
+         if not event_fun then
+            print("function is not exist")
+         end
+
+         success, ret = pcall(event_fun, thread_id)
+         
          if not success then
             if type(ret) == "table" and
                ret.errcode == sysbench.error.RESTART_EVENT
@@ -93,9 +99,17 @@ function thread_run_once(thread_id, str, is_custom)
 
       ffi.C.sb_event_stop(thread_id)
    else
+      local event_fun =_G[str]
+
+      if not event_fun then
+         print("function is not exist")
+      end
+
       local success, ret
       repeat
-         success, ret = pcall(str, thread_id)
+         -- print(str)
+         -- load(str)
+         success, ret = pcall(event_fun, seed)
 
          if not success then
             if type(ret) == "table" and

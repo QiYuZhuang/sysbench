@@ -131,7 +131,7 @@ typedef int sb_op_init(void);
 typedef int sb_op_prepare(void);
 typedef int sb_op_thread_init(int);
 typedef int sb_op_thread_run(int);
-typedef int sb_op_thread_run_once(int, const char *, bool);
+typedef int sb_op_thread_run_once(int, int, const char *, bool);
 typedef void sb_op_print_mode(void);
 typedef sb_event_t sb_op_next_event(int);
 typedef int sb_op_execute_event(sb_event_t *, int);
@@ -215,6 +215,7 @@ typedef struct
   char      *test_name;
   session_t *sessions;
   int32_t   n_session;
+  int32_t   n_step;
 } TestSpec;
 
 /* sysbench global variables */
@@ -251,6 +252,8 @@ typedef struct
   uint64_t        nevents CK_CC_CACHELINE; /* event counter */
   const char      *luajit_cmd; /* LuaJIT command */
   int             event_count;
+  double          ratio;
+  bool            ratio_is_dynamic;
 } sb_globals_t;
 
 extern sb_globals_t sb_globals CK_CC_CACHELINE;
@@ -275,8 +278,15 @@ typedef struct
 extern index_item_t threads_index[MAX_THREAD_LEN];
 extern int32_t threads_count[MAX_THREAD_LEN];
 
+typedef struct 
+{
+  bool            is_ready;
+  int             step_id;
+  pthread_mutex_t mutex;
+} sequence_t;
+
 extern TestSpec test_spec;
-extern int      sequence[MAX_STEP];
+extern sequence_t     sequence[MAX_STEP];
 
 extern TLS int sb_tls_thread_id;
 

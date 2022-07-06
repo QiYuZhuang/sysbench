@@ -1,0 +1,91 @@
+{
+  "test-spec": 
+  [ 
+    [
+      {
+        "id":   1,
+        "sql":  "s1s1",
+        "wait": null
+      },
+      { 
+        "id":   2,
+        "sql":  "s1s2",
+        "wait": 4
+      },
+      {
+        "id":   3,
+        "sql":  "c",
+        "wait": null
+      }
+    ],
+    [
+      {
+        "id":   4,
+        "sql":  "s2s1_h",
+        "wait": null
+      },
+      {
+        "id":   5,
+        "sql":  "s2s2_h",
+        "wait": 1
+      },
+      {
+        "id":   6,
+        "sql":  "c",
+        "wait": null
+      }  
+    ],
+    [
+      {
+        "id":   7,
+        "sql":  "s3s1_h",
+        "wait": null
+      },
+      { 
+        "id":   8,
+        "sql":  "s3s2_h",
+        "wait": 4
+      },
+      {
+        "id":   9,
+        "sql":  "c",
+        "wait": null
+      }
+    ],
+    [
+      {
+        "id":   10,
+        "sql":  "s4s1_h",
+        "wait": null
+      },
+      { 
+        "id":   11,
+        "sql":  "s4s2_h",
+        "wait": 7
+      },
+      {
+        "id":   12,
+        "sql":  "c",
+        "wait": null
+      }
+    ],
+    [
+      {
+        "id":   13,
+        "sql":  "s5s1_h",
+        "wait": null
+      },
+      { 
+        "id":   14,
+        "sql":  "s5s2_h",
+        "wait": 10
+      },
+      {
+        "id":   15,
+        "sql":  "c",
+        "wait": null
+      }
+    ]
+  ],
+  "sequence": [1, 4, 7, 10, 13, 5, 8, 11, 14, 2, 3, 6, 9, 12, 15]
+}

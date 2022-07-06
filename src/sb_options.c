@@ -671,6 +671,19 @@ sb_list_item_t *sb_options_enum_next(sb_list_item_t *pos, option_t **opt)
   return pos;
 }
 
+void print_option(void)
+{
+  sb_list_item_t *pos = sb_options_enum_start();
+  option_t *opt;
+  printf("[option]: ");
+
+  while ((pos = sb_options_enum_next(pos, &opt)) != NULL)
+  {
+    printf("%s ", (*opt).name);
+  }
+  printf("\n");
+}
+
 
 sb_list_t *read_config(FILE *fp, sb_list_t *options)
 {

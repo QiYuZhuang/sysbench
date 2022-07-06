@@ -126,7 +126,7 @@ static int sb_lua_op_init(void);
 static int sb_lua_op_done(void);
 static int sb_lua_op_thread_init(int);
 static int sb_lua_op_thread_run(int);
-static int sb_lua_op_thread_run_once(int, const char *, bool);
+static int sb_lua_op_thread_run_once(int, int, const char *, bool);
 static int sb_lua_op_thread_done(int);
 
 static sb_operations_t lua_ops = {
@@ -185,6 +185,7 @@ static bool func_available(lua_State *L, const char *func)
 
 static int do_export_options(lua_State *L, bool global)
 {
+  // print_option();
   sb_list_item_t *pos;
   option_t       *opt;
   char           *tmp;
@@ -199,6 +200,7 @@ static int do_export_options(lua_State *L, bool global)
   pos = sb_options_enum_start();
   while ((pos = sb_options_enum_next(pos, &opt)) != NULL)
   {
+    // printf("opt->name: %s\n", opt->name);
     /*
       The only purpose of the following check if to keep compatibility with
       legacy scripts where options were exported to the global namespace. In
@@ -219,6 +221,7 @@ static int do_export_options(lua_State *L, bool global)
     {
       lua_pushstring(L, opt->name);
     }
+    // printf("opt->name: %s\n", opt->name);
 
     switch (opt->type)
     {
@@ -256,10 +259,15 @@ static int do_export_options(lua_State *L, bool global)
         lua_pushnil(L);
         break;
       default:
+      {
+        // pthread_t tid;
+        // tid = pthread_self();
+        // printf("[tid %u (0x%x)] ", (unsigned int)tid, (unsigned int)tid);
         log_text(LOG_WARNING, "Global option '%s' will not be exported, because"
                  " the type is unknown", opt->name);
         lua_pushnil(L);
         break;
+      }
     }
 
     /* set var = value */
@@ -272,6 +280,7 @@ static int do_export_options(lua_State *L, bool global)
   if (!global)
     lua_settable(L, -3); /* set sysbench.opt */
 
+  // print_option();
   return 0;
 }
 
@@ -404,6 +413,7 @@ int sb_lua_op_init(void)
 
 int sb_lua_op_thread_init(int thread_id)
 {
+  // print_option();
   lua_State * L;
 
   L = sb_lua_new_state();
@@ -411,7 +421,11 @@ int sb_lua_op_thread_init(int thread_id)
     return 1;
 
   states[thread_id] = L;
-
+  
+  // unsigned long tid;
+  // tid = pthread_self();
+  // printf("[tid %u (0x%x)] run here.\n", (unsigned int)tid, (unsigned int)tid);
+  // print_option();
   if (export_options(L))
     return 1;
 
@@ -446,16 +460,18 @@ int sb_lua_op_thread_run(int thread_id)
   return 0;
 }
 
-int sb_lua_op_thread_run_once(int thread_id, const char * event_str, bool is_custom)
+int sb_lua_op_thread_run_once(int thread_id, int seed, const char * event_str, bool is_custom)
 {
+  // printf("event_str: %s\n", event_str);
   lua_State * const L = states[thread_id];
 
   lua_getglobal(L, THREAD_RUN_FUNC_ONCE);
   lua_pushnumber(L, thread_id);
+  lua_pushnumber(L, seed);
   lua_pushstring(L, event_str);
   lua_pushboolean(L, is_custom);
 
-  if (lua_pcall(L, 3, 1, 0))
+  if (lua_pcall(L, 4, 1, 0))
   {
     call_error(L, THREAD_RUN_FUNC_ONCE);
     return 1;

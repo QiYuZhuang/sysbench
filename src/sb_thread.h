@@ -32,6 +32,7 @@
 # include <pthread.h>
 #endif
 #include <stdbool.h>
+#include "sysbench.h"
 
 /* Thread context definition */
 
@@ -56,6 +57,9 @@ typedef struct
    bool           is_end;
    bool           is_ready;
    char           *sql_str;
+   int            session_id;
+   int            seed;
+   sequence_t     *p_sequence;
    event_state_t  event_state;
 } sb_thread_event_t;
 

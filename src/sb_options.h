@@ -155,5 +155,7 @@ sb_list_t *read_config(FILE *, sb_list_t *);
 
 int write_config(FILE *, sb_list_t *);
 
+void print_option(void);
+
 #endif /* OPTIONS_H */
 
