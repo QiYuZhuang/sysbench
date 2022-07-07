@@ -936,12 +936,14 @@ static void *worker_thread(void *arg)
   sb_rand_thread_init();
 
   log_text(LOG_DEBUG, "Worker thread (#%d) started", thread_id);
-  pthread_mutex_lock(&threads_mutex[0]);
+  if (sb_globals.event_count > 0)
+    pthread_mutex_lock(&threads_mutex[0]);
   // printf("[thread id]: %d\n", thread_id);
   // print_option();
   if (test->ops.thread_init != NULL && test->ops.thread_init(thread_id) != 0)
   {
-    pthread_mutex_unlock(&threads_mutex[0]);
+    if (sb_globals.event_count > 0)
+      pthread_mutex_unlock(&threads_mutex[0]);
     log_text(LOG_INFO, "Worker thread (#%d) failed to initialize!", thread_id);
     sb_globals.error = 1;
     /* Avoid blocking the main thread */
@@ -949,7 +951,8 @@ static void *worker_thread(void *arg)
     return NULL;
   }
   // printf("[thread id]: %d\n", thread_id);
-  pthread_mutex_unlock(&threads_mutex[0]);
+  if (sb_globals.event_count > 0)
+    pthread_mutex_unlock(&threads_mutex[0]);
   // log_text(LOG_DEBUG, "Worker thread (#%d) initialized", thread_id);
 
   /* Wait for other threads to initialize */

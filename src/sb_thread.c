@@ -75,8 +75,8 @@ int sb_thread_init(void)
   unsigned int thread_count = (sb_globals.event_count > 0) ? 
                               (sb_globals.threads + sb_globals.event_count - 1) : 
                               sb_globals.threads;
-
-  threads = malloc(thread_count * sizeof(sb_thread_ctxt_t));
+  threads = (sb_thread_ctxt_t *)malloc((thread_count + 1) * sizeof(sb_thread_ctxt_t));
+  memset(threads, 0, sizeof(sb_thread_ctxt_t) * thread_count);
   if (threads == NULL)
   {
     log_text(LOG_FATAL, "Memory allocation failure.\n");
