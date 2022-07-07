@@ -4,13 +4,13 @@
     [
       {
         "id":   1,
-        "sql":  "s1s1",
+        "sql":  "s1s1_h",
         "wait": null
       },
       { 
         "id":   2,
-        "sql":  "s1s2",
-        "wait": 4
+        "sql":  "s1s2_h",
+        "wait": 13
       },
       {
         "id":   3,
