@@ -36,7 +36,7 @@ int sb_counters_init(void)
 {
   SB_COMPILE_TIME_ASSERT(sizeof(sb_counters_t) % CK_MD_CACHELINE == 0);
 
-  sb_counters = sb_alloc_per_thread_array(sizeof(sb_counters_t));
+  sb_counters = sb_alloc_array(sb_globals.event_count > 0 ? sb_globals.threads + sb_globals.event_count - 1 : sb_globals.threads, sizeof(sb_counters_t));
 
   return sb_counters == NULL;
 }

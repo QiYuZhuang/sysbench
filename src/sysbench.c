@@ -1836,8 +1836,9 @@ static int init(void)
   }
 
   /* Initialize timers */
-  timers = sb_alloc_per_thread_array(sizeof(sb_timer_t));
-  timers_copy = sb_alloc_per_thread_array(sizeof(sb_timer_t));
+  unsigned thread_count = (sb_globals.event_count > 0) ? sb_globals.threads + sb_globals.event_count - 1 : sb_globals.event_count;
+  timers = sb_alloc_array(sizeof(sb_timer_t), thread_count);
+  timers_copy = sb_alloc_array(sizeof(sb_timer_t), thread_count);
 
   if (timers == NULL || timers_copy == NULL)
   {
@@ -1845,7 +1846,7 @@ static int init(void)
     return 1;
   }
 
-  for (unsigned i = 0; i < sb_globals.threads; i++)
+  for (unsigned i = 0; i < thread_count; i++)
     sb_timer_init(&timers[i]);
 
   /* Initialize conds and threads identify */
