@@ -59,7 +59,7 @@ end
 -- ----------------------------------------------------------------------
 -- This is a Lua version of sysbench.c:thread_run_once()
 -- ----------------------------------------------------------------------
-function thread_run_once(thread_id, seed, str, is_custom)
+function thread_run_once(thread_id, seed, str, is_custom, is_control)
    -- if not is_custom then 
    --    print("run here, thread_id: "..thread_id..". common event")
    -- else
@@ -99,7 +99,13 @@ function thread_run_once(thread_id, seed, str, is_custom)
 
       ffi.C.sb_event_stop(thread_id)
    else
-      local event_fun =_G[str]
+      local event_fun
+      if is_control then
+         event_fun = _G[str.."_c"]
+      else
+         -- print(str)
+         event_fun = _G[str]
+      end
 
       if not event_fun then
          print("function is not exist")
@@ -119,6 +125,7 @@ function thread_run_once(thread_id, seed, str, is_custom)
                   sysbench.hooks.before_restart_event(ret)
                end
             else
+               print(ret)
                error(ret, 2) -- propagate unknown errors
             end
          end

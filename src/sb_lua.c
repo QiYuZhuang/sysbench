@@ -126,7 +126,7 @@ static int sb_lua_op_init(void);
 static int sb_lua_op_done(void);
 static int sb_lua_op_thread_init(int);
 static int sb_lua_op_thread_run(int);
-static int sb_lua_op_thread_run_once(int, int, const char *, bool);
+static int sb_lua_op_thread_run_once(int, int, const char *, bool, bool);
 static int sb_lua_op_thread_done(int);
 
 static sb_operations_t lua_ops = {
@@ -467,7 +467,7 @@ int sb_lua_op_thread_run(int thread_id)
   return 0;
 }
 
-int sb_lua_op_thread_run_once(int thread_id, int seed, const char * event_str, bool is_custom)
+int sb_lua_op_thread_run_once(int thread_id, int seed, const char * event_str, bool is_custom, bool is_control)
 {
   // printf("event_str: %s\n", event_str);
   lua_State * const L = states[thread_id];
@@ -477,8 +477,9 @@ int sb_lua_op_thread_run_once(int thread_id, int seed, const char * event_str, b
   lua_pushnumber(L, seed);
   lua_pushstring(L, event_str);
   lua_pushboolean(L, is_custom);
+  lua_pushboolean(L, is_control);
 
-  if (lua_pcall(L, 4, 1, 0))
+  if (lua_pcall(L, 5, 1, 0))
   {
     call_error(L, THREAD_RUN_FUNC_ONCE);
     return 1;

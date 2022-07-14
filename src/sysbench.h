@@ -56,7 +56,7 @@
 
 /* Maximum queue length for thread pool */
 #define MAX_THREAD_LEN  1024
-#define MAX_STEPS_PER_SESSION 64
+#define MAX_STEPS_PER_SESSION 16
 #define MAX_STEP        512
 
 /* Request types definition */
@@ -131,7 +131,7 @@ typedef int sb_op_init(void);
 typedef int sb_op_prepare(void);
 typedef int sb_op_thread_init(int);
 typedef int sb_op_thread_run(int);
-typedef int sb_op_thread_run_once(int, int, const char *, bool);
+typedef int sb_op_thread_run_once(int, int, const char *, bool, bool);
 typedef void sb_op_print_mode(void);
 typedef sb_event_t sb_op_next_event(int);
 typedef int sb_op_execute_event(sb_event_t *, int);
@@ -185,6 +185,21 @@ typedef struct sb_test
   sb_list_item_t    listitem;
 } sb_test_t;
 
+typedef struct 
+{
+  int16_t         is_ready;
+  int             step_id;
+  pthread_mutex_t mutex;
+} sequence_t;
+
+typedef struct 
+{
+  /* data */
+  int   *threads;
+  int   anomaly_id;
+  bool  control_group;
+}control_t;
+
 typedef struct sb_thread_pool
 {
   int capacity;
@@ -196,26 +211,36 @@ typedef struct sb_thread_pool
   ck_ring_buffer_t queue_buffer[MAX_THREAD_LEN] CK_CC_CACHELINE;
 } sb_thread_pool_t;
 
-typedef struct Step
+typedef struct 
 {
   int32_t id;
   char*   sql;
   int32_t wait_for;
-}step_t;
+} Step;
 
-typedef struct Session
+typedef struct 
 {
   /* data */
-  step_t    steps[MAX_STEPS_PER_SESSION];
+  Step      steps[MAX_STEPS_PER_SESSION];
   int32_t   n_step;
-}session_t;
+} Session;
 
 typedef struct
 {
-  char      *test_name;
-  session_t *sessions;
-  int32_t   n_session;
-  int32_t   n_step;
+  char        *test_name;
+  Session     *sessions;
+  sequence_t  sequence[16];
+  int32_t     last_sequence;
+  int32_t     n_session;
+  int32_t     n_step;
+} Anomaly;
+
+typedef struct
+{
+  int32_t   max_event_count;
+  int32_t   n_anomaly;
+  Anomaly   *anomalys;
+  int32_t   ratio[101];
 } TestSpec;
 
 /* sysbench global variables */
@@ -254,6 +279,8 @@ typedef struct
   int             event_count;
   double          ratio;
   bool            ratio_is_dynamic;
+  bool            control_group;
+  char            *test_spec_name;
 } sb_globals_t;
 
 extern sb_globals_t sb_globals CK_CC_CACHELINE;
@@ -278,15 +305,7 @@ typedef struct
 extern index_item_t threads_index[MAX_THREAD_LEN];
 extern int32_t threads_count[MAX_THREAD_LEN];
 
-typedef struct 
-{
-  bool            is_ready;
-  int             step_id;
-  pthread_mutex_t mutex;
-} sequence_t;
-
 extern TestSpec test_spec;
-extern sequence_t     sequence[MAX_STEP];
 
 extern TLS int sb_tls_thread_id;
 

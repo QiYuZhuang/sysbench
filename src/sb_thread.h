@@ -56,8 +56,10 @@ typedef struct
    bool           is_custom;
    bool           is_end;
    bool           is_ready;
+   bool           is_control_group;
    char           *sql_str;
    int            session_id;
+   int            anomaly_id;
    int            seed;
    sequence_t     *p_sequence;
    event_state_t  event_state;

@@ -124,6 +124,8 @@ sb_arg_t general_args[] =
   SB_OPT("event-count", "add costom examples and test their performance", "0", INT),
   SB_OPT("anomaly-ratio", "the ratio about common case and anomaly case, default is 0", "0.0", DOUBLE),
   SB_OPT("dynamic-rate", "the anomaly ratio is dynamic or not", "0", BOOL),
+  SB_OPT("control-group", "the control group for anomaly", "0", BOOL),
+  SB_OPT("test-spec", "file name for data anomaly", NULL, STRING),
 
   SB_OPT_END
 };
@@ -134,7 +136,6 @@ index_item_t threads_index[MAX_THREAD_LEN];
 int32_t threads_count[MAX_THREAD_LEN];
 
 TestSpec  test_spec;
-sequence_t     sequence[MAX_STEP];
 
 /* List of available tests */
 sb_list_t        tests;
@@ -509,19 +510,20 @@ void print_help(void)
          "each test.\n\n");
 }
 
-static void parse_test(cJSON *json)
+static void parse_test(cJSON *json, Anomaly *anomaly)
 {
   cJSON *arrayItem = cJSON_GetObjectItem(json, "test-spec");
   if(arrayItem != NULL)  
   {  
     int size = cJSON_GetArraySize(arrayItem);
-    test_spec.n_session = size;
-    test_spec.sessions = (session_t *)malloc(sizeof(session_t) * size);
+    anomaly->n_session = size;
+    anomaly->sessions = (Session *)malloc(sizeof(Session) * size);
     for (int i = 0 ; i < size; i++)
     {
       cJSON *stepArrayItem = cJSON_GetArrayItem(arrayItem, i);
+      Session *curr = anomaly->sessions + i;
       int step_s = cJSON_GetArraySize(stepArrayItem);
-      (test_spec.sessions + i)->n_step = step_s;
+      curr->n_step = step_s;
       for (int j = 0; j < step_s; j++)
       {
         cJSON *object = cJSON_GetArrayItem(stepArrayItem, j);
@@ -529,64 +531,118 @@ static void parse_test(cJSON *json)
         if (item != NULL)
         {
           // printf("cJSON_GetObjectItem: type=%d, int is %d\n", item->type, item->valueint);  
-          ((test_spec.sessions + i)->steps)[j].id = item->valueint;
+          (curr->steps)[j].id = item->valueint;
         }
 
-        item = cJSON_GetObjectItem(object, "sql");
+        item = cJSON_GetObjectItem(object, "func");
         if (item != NULL)
         {
           // printf("cJSON_GetObjectItem: type=%d, str is %s\n", item->type, item->valuestring);  
-          ((test_spec.sessions + i)->steps)[j].sql = (char *)malloc(sizeof(char) * (strlen(item->valuestring) + 2));
-          memset(((test_spec.sessions + i)->steps)[j].sql, 0, strlen(item->valuestring) + 2);
-          memcpy(((test_spec.sessions + i)->steps)[j].sql, item->valuestring, strlen(item->valuestring));
+          (curr->steps)[j].sql = (char *)malloc(sizeof(char) * (strlen(item->valuestring) + 2));
+          memset((curr->steps)[j].sql, 0, strlen(item->valuestring) + 2);
+          memcpy((curr->steps)[j].sql, item->valuestring, strlen(item->valuestring));
         }
 
         item = cJSON_GetObjectItem(object, "wait-for");
         if (item != NULL)
         {
           // printf("cJSON_GetObjectItem: type=%d, str is %d\n", item->type, item->valueint);  
-          ((test_spec.sessions + i)->steps)[j].wait_for = item->valueint;
+          (curr->steps)[j].wait_for = item->valueint;
         }
         else
         {
-          ((test_spec.sessions + i)->steps)[j].wait_for = 0;
+          (curr->steps)[j].wait_for = 0;
         }
       }
     }
   }
 }
 
-static void parse_sequence(cJSON *json)
+static void parse_sequence(cJSON *json, Anomaly *anomaly)
 {
   cJSON *arrayItem = cJSON_GetObjectItem(json, "sequence");
   if(arrayItem != NULL)  
   {  
     int size = cJSON_GetArraySize(arrayItem);
-    test_spec.n_step = size;
+
+    anomaly->n_step = size;
+    // anomaly->sequence = (sequence_t *)malloc((size + 1) * sizeof(sequence_t));
     for (int i = 0 ; i < size; i++) {
       cJSON *item = cJSON_GetArrayItem(arrayItem, i);
       if(item!=NULL)  
       {  
         // printf("cJSON_GetObjectItem: type=%d, str is %s, int is %d\n", item->type, item->string, item->valueint);  
-        sequence[i].step_id = item->valueint;
+        anomaly->sequence[i].step_id = item->valueint;
       }
 
       // init sequence item's condition variable and mutex
-      pthread_mutex_init(&(sequence[i].mutex), NULL);
-      sequence[i].is_ready = false;
+      pthread_mutex_init(&(anomaly->sequence[i].mutex), NULL);
+      anomaly->sequence[i].is_ready = 0;
+    }
+    anomaly->last_sequence = anomaly->sequence[size - 1].step_id;
+  }
+}
+
+static void parse_ratio(cJSON *json)
+{
+  const int percent = 100;
+  cJSON *arrayItem = cJSON_GetObjectItem(json, "ratio");
+  if(arrayItem != NULL)  
+  {  
+    int size = cJSON_GetArraySize(arrayItem);
+    int l = 0, r = 0;
+
+    for (int i = 0 ; i < size; i++) {
+      cJSON *item = cJSON_GetArrayItem(arrayItem, i);
+      if(item!=NULL)  
+      {  
+        // printf("cJSON_GetObjectItem: type=%d, double is %lf, left: %d, right: %d\n", item->type, item->valuedouble, l, r);  
+        r += (int)(item->valuedouble * percent);
+        for (int j = l; j < r; j++)
+        {
+          test_spec.ratio[j] = i;
+        }
+        l = r;
+      }
+    }
+  }
+}
+
+static void parse_anomaly(cJSON *json)
+{
+  cJSON *arrayItem = cJSON_GetObjectItem(json, "anomaly");
+  if (arrayItem != NULL)
+  {
+    int size = cJSON_GetArraySize(arrayItem);
+    assert(size == test_spec.n_anomaly);
+
+    // alloc memory for anomalies
+    test_spec.anomalys = (Anomaly *)malloc(sizeof(Anomaly) * size);
+    for (int i = 0; i < size; i++)
+    {
+      Anomaly *curr = test_spec.anomalys + i;
+      cJSON *anomalyItem = cJSON_GetArrayItem(arrayItem, i);
+
+      // get anomaly's name
+      cJSON *item = cJSON_GetObjectItem(anomalyItem, "name");
+      curr->test_name = (char *)malloc(sizeof(char) * (strlen(item->valuestring) + 2));
+      memcpy(curr->test_name, item->valuestring, strlen(item->valuestring));
+      curr->test_name[strlen(item->valuestring)] = '\0';
+      // get anomaly's main body(sessions)
+      parse_test(anomalyItem, curr);
+      // get anomaly's execute sequence
+      parse_sequence(anomalyItem, curr);
     }
   }
 }
 
 static void parse_anomaly_spec(void)
 {
-  char *anomaly_path = "anomasly/";
-  char *test_name = "deadlock-hard.json";
+  char *test_name = sb_globals.test_spec_name;
   char full_name[128];
   memset(full_name, 0, 128);
 
-  // TODO: 将此处改成循环，将 anomaly_path 目录下的所有 json 文件读取出来
-  snprintf(full_name, 128, "../sysbench/src/anomaly/%s", test_name);
+  snprintf(full_name, 128, "anomaly/%s.json", test_name);
   // printf("%s\n", full_name);
   FILE *fh = fopen(full_name, "r");
   if (!fh) 
@@ -613,8 +669,17 @@ static void parse_anomaly_spec(void)
   } 
   else  
   {
-    parse_sequence(json);
-    parse_test(json);
+    // get n-anomaly
+    cJSON *item = cJSON_GetObjectItem(json, "n-anomaly");
+    test_spec.n_anomaly = item->valueint;
+    // get max-event
+    item = cJSON_GetObjectItem(json, "max-event");
+    test_spec.max_event_count = item->valueint;
+    // get anomaly via parse_anomaly()
+    parse_anomaly(json);
+    // get ratio via parse_ratio()
+    parse_ratio(json);
+    
   }
   return;
 }
@@ -936,14 +1001,10 @@ static void *worker_thread(void *arg)
   sb_rand_thread_init();
 
   log_text(LOG_DEBUG, "Worker thread (#%d) started", thread_id);
-  if (sb_globals.event_count > 0)
-    pthread_mutex_lock(&threads_mutex[0]);
-  // printf("[thread id]: %d\n", thread_id);
+
   // print_option();
   if (test->ops.thread_init != NULL && test->ops.thread_init(thread_id) != 0)
   {
-    if (sb_globals.event_count > 0)
-      pthread_mutex_unlock(&threads_mutex[0]);
     log_text(LOG_INFO, "Worker thread (#%d) failed to initialize!", thread_id);
     sb_globals.error = 1;
     /* Avoid blocking the main thread */
@@ -951,8 +1012,6 @@ static void *worker_thread(void *arg)
     return NULL;
   }
   // printf("[thread id]: %d\n", thread_id);
-  if (sb_globals.event_count > 0)
-    pthread_mutex_unlock(&threads_mutex[0]);
   // log_text(LOG_DEBUG, "Worker thread (#%d) initialized", thread_id);
 
   /* Wait for other threads to initialize */
@@ -987,8 +1046,9 @@ static void *worker_thread(void *arg)
       {
         if (threads_event[thread_id].is_custom)
         {
+          // BEGIN
           sb_event_start(thread_id);
-          rc = test->ops.thread_run_once(thread_id, 0, "b", true);
+          rc = test->ops.thread_run_once(thread_id, 0, "b", true, false);
           if (rc != 0)
           {
             sb_globals.error = 1;
@@ -996,11 +1056,16 @@ static void *worker_thread(void *arg)
           }
           // printf("thread id: %d\n", thread_id);
           // printf("session id: %d ", threads_event[thread_id].session_id);
-          session_t *p_session = &test_spec.sessions[threads_event[thread_id].session_id];
+          
+          assert(threads_event[thread_id].anomaly_id < test_spec.n_anomaly);
+          Anomaly *anomaly = test_spec.anomalys + threads_event[thread_id].anomaly_id;
+          assert(threads_event[thread_id].session_id < anomaly->n_session);
+          Session *p_session = anomaly->sessions + threads_event[thread_id].session_id;
           // printf("session's total steps: %d ", p_session->n_step);
           // printf("sequence's total steps: %d\n", test_spec.n_step);
           for (int32_t i = 0; i < p_session->n_step; i++)
           {
+            assert(p_session->steps[i].wait_for <= anomaly->n_step && p_session->steps[i].id <= anomaly->n_step);
             if (p_session->steps[i].wait_for != 0)
             {
               // wait for signal
@@ -1010,7 +1075,8 @@ static void *worker_thread(void *arg)
               {
                 sb_nanosleep(1);
               }
-              rc = test->ops.thread_run_once(thread_id, threads_event[thread_id].seed, p_session->steps[i].sql, true);
+              rc = test->ops.thread_run_once(thread_id, threads_event[thread_id].seed, p_session->steps[i].sql, true, 
+              threads_event[thread_id].is_control_group);
               if (rc != 0)
               {
                 sb_globals.error = 1;
@@ -1019,19 +1085,39 @@ static void *worker_thread(void *arg)
             }
             else 
             {
-              rc = test->ops.thread_run_once(thread_id, threads_event[thread_id].seed, p_session->steps[i].sql, true);
+              rc = test->ops.thread_run_once(thread_id, threads_event[thread_id].seed, p_session->steps[i].sql, true, 
+              threads_event[thread_id].is_control_group);
+              if (rc != 0)
+              {
+                sb_globals.error = 1;
+                return NULL;
+              }
             }
-            threads_event[thread_id].p_sequence[p_session->steps[i].id].is_ready = true;
+            ck_pr_cas_16(&(threads_event[thread_id].p_sequence[p_session->steps[i].id].is_ready), 0, 1);
+          }
+
+          // COMMIT
+          rc = test->ops.thread_run_once(thread_id, 0, "c", true, false);
+          if (rc != 0)
+          {
+            sb_globals.error = 1;
+            return NULL;
           }
 
           sb_event_stop(thread_id);
 
-          if (sequence[test_spec.n_step - 1].step_id == p_session->steps[p_session->n_step - 1].id)
+          if (anomaly->last_sequence == p_session->steps[p_session->n_step - 1].id)
             free(threads_event[thread_id].p_sequence);  // 释放每一组数据异常申请的 sequence 空间
         }
         else 
         {
-          rc = test->ops.thread_run_once(thread_id, 0, threads_event[thread_id].sql_str, threads_event[thread_id].is_custom);
+          rc = test->ops.thread_run_once(thread_id, 0, threads_event[thread_id].sql_str, threads_event[thread_id].is_custom, 
+          false);
+          if (rc != 0)
+          {
+            sb_globals.error = 1;
+            return NULL;
+          }
         }
 
         pthread_mutex_lock(&sb_custom_thread_pool.mutex);
@@ -1081,40 +1167,44 @@ static inline double sb_rand_exp(double lambda)
 
 static void *control_thread_proc(void *arg)
 {
-  int32_t *thread_ids = (int32_t *)arg;
+  control_t *control = (control_t *)arg;
+  int *thread_ids = control->threads;
+  Anomaly *anomaly = test_spec.anomalys + control->anomaly_id;
 
   sb_tls_thread_id = SB_BACKGROUND_THREAD_ID;
 
   sb_rand_thread_init();
 
   log_text(LOG_DEBUG, "Event control thread started");
-  assert(test_spec.n_session == sb_globals.event_count);
+  assert(anomaly->n_session <= sb_globals.event_count);
   // init private sequence, alloc memory
 
-  sequence_t *con_sequence = (sequence_t *)malloc((test_spec.n_step + 1) * sizeof(sequence_t));
+  sequence_t *con_sequence = (sequence_t *)malloc((anomaly->n_step + 1) * sizeof(sequence_t));
   if (con_sequence == NULL)
   {
-    printf("ddfdaf\n");
     log_text(LOG_FATAL,"Can not alloc memmory.");
     return NULL;
   }
-  memset(con_sequence, 0, sizeof(sequence_t));
-  memcpy(con_sequence, sequence, test_spec.n_step * sizeof(sequence_t));
-  int seed = sb_rand_uniform(1, 10000);
-  for (int32_t i = 0; i < test_spec.n_session; i++)
+  memset(con_sequence, 0, (anomaly->n_step + 1) * sizeof(sequence_t));
+  memcpy(con_sequence, anomaly->sequence, anomaly->n_step * sizeof(sequence_t));
+  int seed = sb_rand_uniform(1, 100000);
+  for (int32_t i = 0; i < anomaly->n_session; i++)
   {
     // printf("Run custom data anomaly examples. [thread]:%d\n", thread_ids[i]);
     pthread_mutex_lock(&threads_mutex[thread_ids[i]]);
     threads_event[thread_ids[i]].p_sequence = con_sequence;
+    threads_event[thread_ids[i]].anomaly_id = control->anomaly_id;
     threads_event[thread_ids[i]].session_id = i;
     threads_event[thread_ids[i]].is_ready = true;
     threads_event[thread_ids[i]].is_custom = true;
+    threads_event[thread_ids[i]].is_control_group = control->control_group;
     threads_event[thread_ids[i]].seed = seed;
     pthread_mutex_unlock(&threads_mutex[thread_ids[i]]);
     pthread_cond_signal(&threads_cond[thread_ids[i]]);
   }
 
   free(thread_ids);
+  free(control);
   return NULL;
 }
 
@@ -1249,11 +1339,15 @@ static void *coordinate_thread_proc(void *arg)
     if (solt < sb_globals.ratio)
     {
       // data anomly
-      int32_t *thread_ids = (int32_t *)malloc((sb_globals.event_count + 1) * sizeof(int32_t));
-      pthread_mutex_lock(&sb_custom_thread_pool.mutex);
-      sb_custom_thread_pool.busy_count += sb_custom_thread_pool.custom_count;
+      int kind = sb_rand_uniform(0, 100);
+      int anomaly_id = test_spec.ratio[kind];
+      Anomaly *anomaly = test_spec.anomalys + anomaly_id;
 
-      for (int i = 0 ; i < sb_globals.event_count; i++)
+      int32_t *thread_ids = (int32_t *)malloc((anomaly->n_session + 1) * sizeof(int32_t));
+      pthread_mutex_lock(&sb_custom_thread_pool.mutex);
+      sb_custom_thread_pool.busy_count += anomaly->n_session;
+
+      for (int i = 0 ; i < anomaly->n_session; i++)
       {
         ck_ring_dequeue_spsc(&sb_custom_thread_pool.queue_thread, sb_custom_thread_pool.queue_buffer, &index_item);
         if (index_item == NULL)
@@ -1267,7 +1361,12 @@ static void *coordinate_thread_proc(void *arg)
       pthread_attr_init(&attr);
       pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
       // TODO:重新创建一个线程进行并发访问控制，生成数据异常例子
-      if (sb_thread_create(&controller, &attr, &control_thread_proc, thread_ids) != 0)
+      control_t *control = (control_t *)malloc(sizeof(control_t));
+      control->threads = thread_ids;
+      control->anomaly_id = anomaly_id;
+      control->control_group = sb_globals.control_group;
+
+      if (sb_thread_create(&controller, &attr, &control_thread_proc, control) != 0)
       {
         log_errno(LOG_FATAL,
                   "sb_thread_create() for the control thread failed.");
@@ -1295,6 +1394,7 @@ static void *coordinate_thread_proc(void *arg)
       // printf("Fetch lock thread id(#%d)\n", index_item->thread_id);
       
       threads_event[thread_id].is_custom = false;
+      threads_event[thread_id].is_control_group = false;
       threads_event[thread_id].event_state = UNKNOWN_STATE;
       threads_event[thread_id].is_ready = true;
       pthread_mutex_unlock(&threads_mutex[thread_id]);
@@ -1432,7 +1532,10 @@ static int threads_started_callback(void *arg)
   if (sb_globals.error)
     return 1;
 
-  sb_globals.threads_running = sb_globals.threads;
+  if (sb_globals.event_count > 0)
+    sb_globals.threads_running = sb_globals.event_count + sb_globals.threads - 1;
+  else 
+    sb_globals.threads_running = sb_globals.threads;
 
   sb_timer_start(&sb_exec_timer);
   sb_timer_copy(&sb_intermediate_timer, &sb_exec_timer);
@@ -1711,10 +1814,16 @@ static int init(void)
   sb_list_t         *checkpoints_list;
   sb_list_item_t    *pos_val;
   value_t           *val;
+  
+  sb_globals.test_spec_name = sb_get_value_string("test-spec");
+  if (sb_globals.test_spec_name != NULL)
+    parse_anomaly_spec();
 
   sb_globals.threads = sb_get_value_int("threads");
 
-  sb_globals.event_count = sb_get_value_int("event-count");
+  sb_globals.event_count = test_spec.max_event_count;
+
+  sb_globals.control_group = sb_get_value_flag("control-group");
   
   sb_globals.ratio = sb_get_value_double("anomaly-ratio");
 
@@ -1836,7 +1945,7 @@ static int init(void)
   }
 
   /* Initialize timers */
-  unsigned thread_count = (sb_globals.event_count > 0) ? sb_globals.threads + sb_globals.event_count - 1 : sb_globals.event_count;
+  unsigned thread_count = (sb_globals.event_count > 0) ? sb_globals.threads + sb_globals.event_count - 1 : sb_globals.threads;
   timers = sb_alloc_array(sizeof(sb_timer_t), thread_count);
   timers_copy = sb_alloc_array(sizeof(sb_timer_t), thread_count);
 
@@ -1916,7 +2025,7 @@ int main(int argc, char *argv[])
   if (init() || log_init() || sb_counters_init())
     return EXIT_FAILURE;
 
-  parse_anomaly_spec();
+  // parse_anomaly_spec();
 
   print_header();
 
