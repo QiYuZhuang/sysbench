@@ -346,9 +346,9 @@ sb_test_t *sb_load_lua(const char *testname)
     sbtest.ops.report_cumulative = sb_lua_report_cumulative;
 
   /* Allocate per-thread interpreters array */
-  if (sb_globals.event_count > 0)
+  if (sb_globals.append_threads > 0)
   {
-    states = (lua_State **)calloc(sb_globals.threads + sb_globals.event_count - 1, sizeof(lua_State *));
+    states = (lua_State **)calloc(sb_globals.threads + sb_globals.append_threads, sizeof(lua_State *));
   } 
   else
   {

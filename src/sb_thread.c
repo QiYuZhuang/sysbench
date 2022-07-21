@@ -72,11 +72,9 @@ int sb_thread_init(void)
   thr_setconcurrency(sb_globals.threads);
 #endif
 
-  unsigned int thread_count = (sb_globals.event_count > 0) ? 
-                              (sb_globals.threads + sb_globals.event_count - 1) : 
-                              sb_globals.threads;
+  unsigned int thread_count = sb_globals.append_threads + sb_globals.threads;
   threads = (sb_thread_ctxt_t *)malloc((thread_count + 1) * sizeof(sb_thread_ctxt_t));
-  memset(threads, 0, sizeof(sb_thread_ctxt_t) * thread_count);
+  memset(threads, 0, sizeof(sb_thread_ctxt_t) * (thread_count + 1));
   if (threads == NULL)
   {
     log_text(LOG_FATAL, "Memory allocation failure.\n");
@@ -169,9 +167,7 @@ int sb_thread_create_workers(void *(*worker_routine)(void*))
 
   log_text(LOG_NOTICE, "Initializing worker threads...\n");
 
-  unsigned int thread_count = (sb_globals.event_count > 0) ? 
-                              (sb_globals.threads + sb_globals.event_count - 1) : 
-                              sb_globals.threads;
+  unsigned int thread_count = sb_globals.append_threads + sb_globals.threads;
 
   for(i = 0; i < thread_count; i++)
   {
@@ -197,9 +193,7 @@ int sb_thread_create_workers(void *(*worker_routine)(void*))
 
 int sb_thread_join_workers(void)
 {
-  unsigned int thread_count = (sb_globals.event_count > 0) ? 
-                              (sb_globals.threads + sb_globals.event_count - 1) : 
-                              sb_globals.threads;
+  unsigned int thread_count = sb_globals.append_threads + sb_globals.threads;
 
   for(unsigned i = 0; i < thread_count; i++)
   {

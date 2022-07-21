@@ -1020,11 +1020,13 @@ static void *worker_thread(void *arg)
 
   log_text(LOG_DEBUG, "Worker thread (#%d) initialized", thread_id);
 
-  if (sb_globals.event_count > 0) 
+  if (sb_globals.append_threads > 0 && thread_id >= sb_globals.threads) 
   {
     // printf("Worker thread (#%d) initialized", thread_id);
+    // append worker threads
     while(true) {
-      /* TODO:等待条件变量和共享内存中的数据，拿到 thread_id 的 event_t 传给 thread_run_once 
+      /* 
+       * 等待条件变量和共享内存中的数据，拿到 thread_id 的 event_t 传给 thread_run_once 
        * thread_run_once 定义在 sysbench.lua 中
        */
       pthread_mutex_lock(&threads_mutex[thread_id]);
@@ -1111,13 +1113,14 @@ static void *worker_thread(void *arg)
         }
         else 
         {
-          rc = test->ops.thread_run_once(thread_id, 0, threads_event[thread_id].sql_str, threads_event[thread_id].is_custom, 
-          false);
-          if (rc != 0)
-          {
-            sb_globals.error = 1;
-            return NULL;
-          }
+          assert(false);
+          // rc = test->ops.thread_run_once(thread_id, 0, threads_event[thread_id].sql_str, threads_event[thread_id].is_custom, 
+          // false);
+          // if (rc != 0)
+          // {
+          //   sb_globals.error = 1;
+          //   return NULL;
+          // }
         }
 
         pthread_mutex_lock(&sb_custom_thread_pool.mutex);
@@ -1296,14 +1299,14 @@ static void *coordinate_thread_proc(void *arg)
 
   /* init sb_custom_thread_pool */
   sb_custom_thread_pool.busy_count = 0;
-  sb_custom_thread_pool.capacity = sb_globals.threads;
+  sb_custom_thread_pool.capacity = sb_globals.append_threads;
   sb_custom_thread_pool.custom_count = sb_globals.event_count;
   pthread_mutex_init(&sb_custom_thread_pool.mutex, NULL);
   ck_ring_init(&(sb_custom_thread_pool.queue_thread), MAX_THREAD_LEN);
 
   log_text(LOG_DEBUG, "Custom event generating thread started");
 
-  for (unsigned int i = 0; i < sb_globals.threads + sb_globals.event_count - 1; i++)
+  for (unsigned int i = 0; i < sb_globals.threads + sb_globals.append_threads; i++)
   {
     threads_index[i].thread_id = (int32_t)i;
     ck_ring_enqueue_spsc(&sb_custom_thread_pool.queue_thread, sb_custom_thread_pool.queue_buffer, &(threads_index[i]));
@@ -1331,19 +1334,23 @@ static void *coordinate_thread_proc(void *arg)
     index_item_t *index_item;
     int32_t thread_id;
     
-    while (sb_custom_thread_pool.busy_count >= sb_custom_thread_pool.capacity) {
+    int kind = sb_rand_uniform(0, 99);
+    int anomaly_id = test_spec.ratio[kind];
+    Anomaly *anomaly = test_spec.anomalys + anomaly_id;
+
+    int32_t *thread_ids = (int32_t *)malloc((anomaly->n_session + 1) * sizeof(int32_t));
+
+    while (sb_custom_thread_pool.capacity - sb_custom_thread_pool.busy_count < anomaly->n_session) {
       // log_text(LOG_DEBUG, "Busy count while choose (#%d)", sb_custom_thread_pool.busy_count);
-      sb_nanosleep(1);
+      curr_ns = sb_timer_value(&sb_exec_timer);
+      if (sb_globals.max_time_ns > 0 &&
+        SB_UNLIKELY(curr_ns >= sb_globals.max_time_ns))
+      break;
     }
     
-    if (solt < sb_globals.ratio)
-    {
+    // if (solt < sb_globals.ratio)
+    // {
       // data anomly
-      int kind = sb_rand_uniform(0, 100);
-      int anomaly_id = test_spec.ratio[kind];
-      Anomaly *anomaly = test_spec.anomalys + anomaly_id;
-
-      int32_t *thread_ids = (int32_t *)malloc((anomaly->n_session + 1) * sizeof(int32_t));
       pthread_mutex_lock(&sb_custom_thread_pool.mutex);
       sb_custom_thread_pool.busy_count += anomaly->n_session;
 
@@ -1373,37 +1380,37 @@ static void *coordinate_thread_proc(void *arg)
         return NULL;
       }
       // assert(false);
-    }
-    else 
-    {
-      // common events
-      log_text(LOG_DEBUG, "Start Choose thread id");
-      // printf("Start Choose thread id");
-      pthread_mutex_lock(&sb_custom_thread_pool.mutex);
-      sb_custom_thread_pool.busy_count++;
-      ck_ring_dequeue_spsc(&sb_custom_thread_pool.queue_thread, sb_custom_thread_pool.queue_buffer, &index_item);
-      pthread_mutex_unlock(&sb_custom_thread_pool.mutex);
-      if (index_item == NULL)
-        printf("The queue is empty, but you still want to dequeue one.\n");
-      log_text(LOG_DEBUG, "Choose thread id(#%d)", index_item->thread_id);
-      // printf("Choose thread id(#%d)\n", index_item->thread_id);
-      thread_id = index_item->thread_id;
-      assert(thread_id >= 0);
-      threads_count[thread_id]++;
-      pthread_mutex_lock(&threads_mutex[thread_id]);
-      // printf("Fetch lock thread id(#%d)\n", index_item->thread_id);
+    // }
+    // else 
+    // {
+    //   // common events
+    //   log_text(LOG_DEBUG, "Start Choose thread id");
+    //   // printf("Start Choose thread id");
+    //   pthread_mutex_lock(&sb_custom_thread_pool.mutex);
+    //   sb_custom_thread_pool.busy_count++;
+    //   ck_ring_dequeue_spsc(&sb_custom_thread_pool.queue_thread, sb_custom_thread_pool.queue_buffer, &index_item);
+    //   pthread_mutex_unlock(&sb_custom_thread_pool.mutex);
+    //   if (index_item == NULL)
+    //     printf("The queue is empty, but you still want to dequeue one.\n");
+    //   log_text(LOG_DEBUG, "Choose thread id(#%d)", index_item->thread_id);
+    //   // printf("Choose thread id(#%d)\n", index_item->thread_id);
+    //   thread_id = index_item->thread_id;
+    //   assert(thread_id >= 0);
+    //   threads_count[thread_id]++;
+    //   pthread_mutex_lock(&threads_mutex[thread_id]);
+    //   // printf("Fetch lock thread id(#%d)\n", index_item->thread_id);
       
-      threads_event[thread_id].is_custom = false;
-      threads_event[thread_id].is_control_group = false;
-      threads_event[thread_id].event_state = UNKNOWN_STATE;
-      threads_event[thread_id].is_ready = true;
-      pthread_mutex_unlock(&threads_mutex[thread_id]);
-      pthread_cond_signal(&threads_cond[thread_id]);
-    }
+    //   threads_event[thread_id].is_custom = false;
+    //   threads_event[thread_id].is_control_group = false;
+    //   threads_event[thread_id].event_state = UNKNOWN_STATE;
+    //   threads_event[thread_id].is_ready = true;
+    //   pthread_mutex_unlock(&threads_mutex[thread_id]);
+    //   pthread_cond_signal(&threads_cond[thread_id]);
+    // }
   } while (true);
 
   // printf("Coordinate thread is done.");
-  for (unsigned int i = 0; i < sb_globals.threads + sb_globals.event_count - 1; i++)
+  for (unsigned int i = sb_globals.threads; i < sb_globals.threads + sb_globals.append_threads; i++)
   {
     pthread_mutex_lock(&threads_mutex[i]);
     threads_event[i].is_end = true;
@@ -1411,8 +1418,6 @@ static void *coordinate_thread_proc(void *arg)
     pthread_mutex_unlock(&threads_mutex[i]);
     pthread_cond_signal(&threads_cond[i]);
   }
-
-  // TODO: 等待所有的 control 进程结束。暂时不实现，看效果。
 
   return NULL;
 }
@@ -1532,8 +1537,8 @@ static int threads_started_callback(void *arg)
   if (sb_globals.error)
     return 1;
 
-  if (sb_globals.event_count > 0)
-    sb_globals.threads_running = sb_globals.event_count + sb_globals.threads - 1;
+  if (sb_globals.append_threads > 0)
+    sb_globals.threads_running = sb_globals.append_threads + sb_globals.threads;
   else 
     sb_globals.threads_running = sb_globals.threads;
 
@@ -1584,8 +1589,10 @@ static int run_test(sb_test_t *test)
   /* Calculate the required number of threads for the worker start barrier */
   barrier_threads = 1 /* main thread */ + sb_globals.threads +
     (sb_globals.tx_rate > 0) /* event generation thread */ +
-    (sb_globals.event_count > 0) + 
-    ((sb_globals.event_count > 0) ? (sb_globals.event_count - 1) : 0);
+    (sb_globals.append_threads > 0) + 
+    sb_globals.append_threads;
+
+  // printf("[barrier_threads]: %d\n", barrier_threads);
 
   if (sb_barrier_init(&worker_barrier, barrier_threads,
                       threads_started_callback, NULL))
@@ -1629,7 +1636,7 @@ static int run_test(sb_test_t *test)
     }
   } // eventgen 线程，通过 time-value 控制 event 发生的速率，条件变量 queue_cond 来并发编程
 
-  if (sb_globals.event_count > 0) {
+  if (sb_globals.append_threads > 0) {
     if ((err = sb_thread_create(&coordinate_thread, &sb_thread_attr,
                                 &coordinate_thread_proc, NULL)) != 0)
     {
@@ -1827,6 +1834,15 @@ static int init(void)
   
   sb_globals.ratio = sb_get_value_double("anomaly-ratio");
 
+  if (sb_globals.ratio > 0)
+  {
+    sb_globals.append_threads = (int)(sb_globals.ratio * sb_globals.threads);
+    if (sb_globals.append_threads < sb_globals.event_count)
+    {
+      sb_globals.append_threads = 0;
+    }
+  }
+
   printf("event-count: %d ratio: %lf\n", sb_globals.event_count, sb_globals.ratio);
 
   thread_init_timeout = sb_get_value_int("thread-init-timeout");
@@ -1945,7 +1961,7 @@ static int init(void)
   }
 
   /* Initialize timers */
-  unsigned thread_count = (sb_globals.event_count > 0) ? sb_globals.threads + sb_globals.event_count - 1 : sb_globals.threads;
+  unsigned thread_count = sb_globals.threads + sb_globals.append_threads;
   timers = sb_alloc_array(sizeof(sb_timer_t), thread_count);
   timers_copy = sb_alloc_array(sizeof(sb_timer_t), thread_count);
 
@@ -1959,9 +1975,9 @@ static int init(void)
     sb_timer_init(&timers[i]);
 
   /* Initialize conds and threads identify */
-  if (sb_globals.event_count > 0)
+  if (sb_globals.append_threads > 0)
   {
-    unsigned int count = sb_globals.threads + sb_globals.event_count - 1;
+    unsigned int count = sb_globals.threads + sb_globals.append_threads;
     threads_cond = sb_alloc_array(sizeof(pthread_cond_t), count);
     threads_event = sb_alloc_array(sizeof(sb_thread_event_t), count);
     threads_mutex = sb_alloc_array(sizeof(pthread_mutex_t), count);
@@ -1972,7 +1988,7 @@ static int init(void)
       pthread_mutex_init(threads_mutex + i, NULL);
     }
 
-    memset(threads_event, 0, sizeof(sb_thread_event_t) * sb_globals.threads);
+    memset(threads_event, 0, sizeof(sb_thread_event_t) * count);
   }
 
   /* LuaJIT commands */

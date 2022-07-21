@@ -125,7 +125,7 @@ function thread_run_once(thread_id, seed, str, is_custom, is_control)
                   sysbench.hooks.before_restart_event(ret)
                end
             else
-               print(ret)
+               print(thread_id .. "  ".. ret)
                error(ret, 2) -- propagate unknown errors
             end
          end

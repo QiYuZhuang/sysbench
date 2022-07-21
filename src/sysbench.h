@@ -281,6 +281,7 @@ typedef struct
   bool            ratio_is_dynamic;
   bool            control_group;
   char            *test_spec_name;
+  int             append_threads;
 } sb_globals_t;
 
 extern sb_globals_t sb_globals CK_CC_CACHELINE;
